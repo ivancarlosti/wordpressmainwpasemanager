@@ -1,0 +1,268 @@
+name: 🎯 WordPress Plugin Deploy
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to deploy (e.g., v1.2.3)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    name: 📦 Package & Deploy to WordPress.org
+    runs-on: ubuntu-latest
+
+    steps:
+      # -------------------------------------------------------
+      # 1. Checkout the release tag
+      # -------------------------------------------------------
+      - name: 📥 Checkout at release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.version }}
+          fetch-depth: 0
+
+      # -------------------------------------------------------
+      # 2. Resolve version from tag
+      # -------------------------------------------------------
+      - name: 🏷️ Resolve version
+        id: version
+        run: |
+          TAG="${{ github.event.release.tag_name || inputs.version }}"
+          VERSION="${TAG#v}"
+
+          PLUGIN_FILE=$(grep -l 'Plugin Name:' *.php 2>/dev/null | head -n 1)
+          if [ -z "${PLUGIN_FILE}" ]; then
+            echo "::error::No WordPress plugin file with a 'Plugin Name:' header found in the repository root."
+            exit 1
+          fi
+
+          PLUGIN_SLUG="${PLUGIN_FILE%.php}"
+          SVN_URL="https://plugins.svn.wordpress.org/${PLUGIN_SLUG}"
+          ZIP_NAME="${PLUGIN_SLUG}.zip"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "plugin_file=${PLUGIN_FILE}" >> "$GITHUB_OUTPUT"
+          echo "plugin_slug=${PLUGIN_SLUG}" >> "$GITHUB_OUTPUT"
+          echo "svn_url=${SVN_URL}" >> "$GITHUB_OUTPUT"
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+
+      # -------------------------------------------------------
+      # 3. Resolve version and stamp plugin files
+      # -------------------------------------------------------
+      - name: 🔢 Stamp version
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          PLUGIN_FILE="${{ steps.version.outputs.plugin_file }}"
+
+          echo "Stamping version ${VERSION}..."
+
+          # 1. WordPress plugin header(s): stamp 'Version:' in every .php file
+          #    that carries a 'Plugin Name:' header (main file and drop-ins),
+          #    skipping vendored directories.
+          HEADER_FILES=$(grep -rl 'Plugin Name:' --include='*.php' . 2>/dev/null | grep -Ev '/(vendor|dependencies|node_modules|\.git)/' || true)
+          HEADER_FILES="$(printf '%s\n%s' "${PLUGIN_FILE}" "${HEADER_FILES}")"
+
+          for file in ${HEADER_FILES}; do
+            if grep -Eq '^[[:space:]]*\*[[:space:]]*Version:[[:space:]]*' "${file}"; then
+              sed -i "s/^ \* Version: .*/ * Version:           ${VERSION}/" "${file}"
+              echo "  ✓ header ${file}"
+            fi
+          done
+
+          if ! grep -Eq '^[[:space:]]*\*[[:space:]]*Version:[[:space:]]*' "${PLUGIN_FILE}"; then
+            echo "::error::Plugin header 'Version:' not found in ${PLUGIN_FILE}."
+            exit 1
+          fi
+
+          # 2. Class constant 'const VERSION = ...' when present.
+          if grep -Eq "const VERSION = '[^']*';" "${PLUGIN_FILE}"; then
+            sed -i "s/const VERSION = '[^']*';/const VERSION = '${VERSION}';/" "${PLUGIN_FILE}"
+            echo "  ✓ const VERSION ${PLUGIN_FILE}"
+          fi
+
+          # 3. Any define( '...VERSION', 'x.y.z' ); carrying a semver value.
+          if grep -Eq "define\( '[A-Za-z0-9_]*VERSION', '[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?' \);" "${PLUGIN_FILE}"; then
+            sed -i -E "s/(define\( '[A-Za-z0-9_]*VERSION', ')[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?(' \);)/\1__NEW_VERSION__\3/" "${PLUGIN_FILE}"
+            sed -i "s/__NEW_VERSION__/${VERSION}/g" "${PLUGIN_FILE}"
+            echo "  ✓ version define ${PLUGIN_FILE}"
+          fi
+
+          # 4. readme.txt Stable tag, when present.
+          if [ -f readme.txt ] && grep -Eq '^Stable tag:[[:space:]]*' readme.txt; then
+            sed -i "s/^Stable tag: .*/Stable tag: ${VERSION}/" readme.txt
+            echo "  ✓ readme.txt Stable tag"
+          fi
+
+          # Verify every marker that exists now carries the release version.
+          FAIL=0
+
+          for file in ${HEADER_FILES}; do
+            HV=$(sed -nE 's/^[[:space:]]*\*[[:space:]]*Version:[[:space:]]*(.*)$/\1/p' "${file}" | head -n 1 | tr -d '[:space:]')
+            if [ -n "${HV}" ] && [ "${HV}" != "${VERSION}" ]; then
+              echo "::error::Header 'Version:' in ${file} is '${HV}', expected '${VERSION}'."
+              FAIL=1
+            fi
+          done
+
+          if grep -Eq "const VERSION = '[^']*';" "${PLUGIN_FILE}"; then
+            CV=$(sed -nE "s/.*const VERSION = '([^']*)';.*/\1/p" "${PLUGIN_FILE}" | head -n 1 | tr -d '[:space:]')
+            if [ "${CV}" != "${VERSION}" ]; then
+              echo "::error::const VERSION is '${CV}', expected '${VERSION}'."
+              FAIL=1
+            fi
+          fi
+
+          if grep -Eq "define\( '[A-Za-z0-9_]*VERSION', '[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?' \);" "${PLUGIN_FILE}"; then
+            DV=$(sed -nE "s/.*define\( '[A-Za-z0-9_]*VERSION', '([^']*)' \);.*/\1/p" "${PLUGIN_FILE}" | head -n 1 | tr -d '[:space:]')
+            if [ "${DV}" != "${VERSION}" ]; then
+              echo "::error::Version define is '${DV}', expected '${VERSION}'."
+              FAIL=1
+            fi
+          fi
+
+          if [ -f readme.txt ] && grep -Eq '^Stable tag:[[:space:]]*' readme.txt; then
+            ST=$(sed -nE 's/^Stable tag:[[:space:]]*(.*)$/\1/p' readme.txt | head -n 1 | tr -d '[:space:]')
+            if [ "${ST}" != "${VERSION}" ]; then
+              echo "::error::Stable tag is '${ST}', expected '${VERSION}'."
+              FAIL=1
+            fi
+          fi
+
+          if [ "${FAIL}" -ne 0 ]; then
+            exit 1
+          fi
+
+          echo "✅ Version ${VERSION} stamped successfully."
+
+      # -------------------------------------------------------
+      # 4. Create WordPress-friendly ZIP
+      #     Root folder inside zip = plugin slug (no version)
+      # -------------------------------------------------------
+      - name: 📦 Create WordPress ZIP package
+        run: |
+          BUILD_DIR="/tmp/wp-build/${{ steps.version.outputs.plugin_slug }}"
+          mkdir -p "${BUILD_DIR}"
+
+          # Copy plugin files to build directory, excluding dev/dot files
+          rsync -av . "${BUILD_DIR}/" \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.gitignore' \
+            --exclude='.gitattributes' \
+            --exclude='.releaserc' \
+            --exclude='.dockerignore' \
+            --exclude='docker' \
+            --exclude='Dockerfile' \
+            --exclude='CNAME' \
+            --exclude='README.md' \
+            --exclude='LICENSE' \
+            --exclude='manifest.json' \
+            --exclude='composer.lock' \
+            --exclude='*.zip'
+
+          # Create the zip with plugin slug as root folder
+          cd /tmp/wp-build
+          zip -r "${GITHUB_WORKSPACE}/${{ steps.version.outputs.zip_name }}" "${{ steps.version.outputs.plugin_slug }}/"
+
+          echo "WordPress ZIP created: ${{ steps.version.outputs.zip_name }}"
+          ls -lh "${GITHUB_WORKSPACE}/${{ steps.version.outputs.zip_name }}"
+
+          # Persist build directory path for SVN deploy step
+          echo "BUILD_DIR=${BUILD_DIR}" >> "${GITHUB_ENV}"
+
+      # -------------------------------------------------------
+      # 5. Upload WordPress ZIP to GitHub Release
+      # -------------------------------------------------------
+      - name: 📤 Upload WordPress ZIP to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ steps.version.outputs.tag }}" \
+            "${{ steps.version.outputs.zip_name }}" --clobber
+
+          echo "WordPress ZIP uploaded to release ${{ steps.version.outputs.tag }}"
+
+      # -------------------------------------------------------
+      # 6. Deploy to WordPress.org SVN
+      #     Requires WPORG_SVN_USERNAME and WPORG_SVN_PASSWORD secrets
+      # -------------------------------------------------------
+      - name: 🔍 Check SVN credentials
+        id: svn_check
+        run: |
+          if [ -n "${{ secrets.WPORG_SVN_USERNAME }}" ] && [ -n "${{ secrets.WPORG_SVN_PASSWORD }}" ]; then
+            echo "SVN credentials found — deploying to WordPress.org."
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "⚠️ SVN credentials not configured. Skipping WordPress.org deployment."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 🚀 Deploy to WordPress.org SVN
+        if: steps.svn_check.outputs.enabled == 'true'
+        env:
+          SVN_USERNAME: ${{ secrets.WPORG_SVN_USERNAME }}
+          SVN_PASSWORD: ${{ secrets.WPORG_SVN_PASSWORD }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SVN_DIR="/tmp/wp-svn"
+
+          echo "Deploying version ${VERSION} to WordPress.org SVN..."
+
+          # Checkout only trunk and tags to keep it fast
+          svn checkout "${{ steps.version.outputs.svn_url }}" "${SVN_DIR}" --depth empty --non-interactive --no-auth-cache \
+            --username "${SVN_USERNAME}" --password "${SVN_PASSWORD}"
+
+          cd "${SVN_DIR}"
+
+          # Get trunk and tags directories
+          svn update trunk --set-depth infinity --non-interactive --no-auth-cache \
+            --username "${SVN_USERNAME}" --password "${SVN_PASSWORD}"
+
+          # Sync plugin files to trunk (delete removed files, add new ones)
+          echo "Syncing files to trunk/..."
+          rsync -av --delete "${BUILD_DIR}/" trunk/ \
+            --exclude='.svn' \
+            --exclude='.git'
+
+          # Remove files from SVN that no longer exist in the build
+          svn status trunk/ | grep '^!' | awk '{print $2}' | while read -r file; do
+            svn rm --non-interactive --no-auth-cache \
+              --username "${SVN_USERNAME}" --password "${SVN_PASSWORD}" "$file"
+          done
+
+          # Add new files to SVN (--force handles directories recursively)
+          svn status trunk/ | grep '^?' | awk '{print $2}' | while read -r file; do
+            svn add --force --non-interactive --no-auth-cache \
+              --username "${SVN_USERNAME}" --password "${SVN_PASSWORD}" "$file"
+          done
+
+          # Copy trunk to tags/{version} for the stable release
+          echo "Tagging release ${VERSION}..."
+          svn update tags --set-depth infinity --non-interactive --no-auth-cache \
+            --username "${SVN_USERNAME}" --password "${SVN_PASSWORD}"
+
+          # Remove existing tag directory if it exists (re-tagging)
+          if [ -d "tags/${VERSION}" ]; then
+            svn rm "tags/${VERSION}" --non-interactive --no-auth-cache \
+              --username "${SVN_USERNAME}" --password "${SVN_PASSWORD}"
+          fi
+
+          # Copy trunk to the new tag
+          svn copy trunk/ "tags/${VERSION}" --non-interactive --no-auth-cache \
+            --username "${SVN_USERNAME}" --password "${SVN_PASSWORD}"
+
+          # Commit everything
+          echo "Committing to WordPress.org SVN..."
+          svn commit -m "Release version ${VERSION}" \
+            --non-interactive --no-auth-cache \
+            --username "${SVN_USERNAME}" --password "${SVN_PASSWORD}"
+
+          echo "✅ Successfully deployed version ${VERSION} to WordPress.org SVN."

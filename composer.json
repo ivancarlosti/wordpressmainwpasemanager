@@ -1,0 +1,20 @@
+{
+    "name": "ivancarlosti/mainwp-ase-manager",
+    "description": "Push Admin and Site Enhancements (ASE) settings from a MainWP Dashboard to child sites.",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "authors": [
+        {
+            "name": "Ivan Carlos",
+            "email": "ivan@ivancarlos.com.br",
+            "homepage": "https://ivancarlos.com.br"
+        }
+    ],
+    "require": {
+        "php": ">=8.1"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    }
+}

@@ -1,0 +1,52 @@
+/**
+ * MainWP ASE Manager admin styles.
+ *
+ * @package MainWP_ASE_Manager
+ */
+
+.mainwp-ase-manager-wrap textarea#ase_settings_json {
+	width: 100%;
+	max-width: 860px;
+	font-family: monospace;
+}
+
+.mainwp-ase-manager-actions {
+	margin: 16px 0;
+}
+
+.mainwp-ase-manager-actions .button {
+	margin-right: 8px;
+}
+
+.mainwp-ase-manager-results {
+	margin-top: 16px;
+}
+
+.mainwp-ase-manager-results-list {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.mainwp-ase-manager-results-list li {
+	margin: 6px 0;
+	padding: 8px 12px;
+	background: #f6f7f7;
+	border-left: 4px solid transparent;
+}
+
+.mainwp-ase-manager-success {
+	color: #007017;
+	border-left-color: #00a32a;
+}
+
+.mainwp-ase-manager-error {
+	color: #b32d2e;
+	border-left-color: #d63638;
+}
+
+.mainwp-ase-manager-status {
+	color: #50575e;
+	font-style: italic;
+	margin: 0;
+}
