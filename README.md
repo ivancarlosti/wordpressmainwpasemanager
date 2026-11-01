@@ -41,7 +41,7 @@ wordpressmainwpasemanager/
 ## Requirements
 
 - **MainWP Dashboard** plugin active on the dashboard site (the extension shows an admin notice if it is not active — see [`is_mainwp_active()`](mainwp-ase-manager.php:155) and [`admin_notice_mainwp_required()`](mainwp-ase-manager.php:172)).
-- **PHP >= 8.1**.
+- **PHP >= 8.2**.
 - **WordPress >= 5.0**.
 - **Admin and Site Enhancements (ASE)** plugin installed and active on the **child sites** that will receive the settings.
 
