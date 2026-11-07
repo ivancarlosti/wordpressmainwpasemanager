@@ -39,7 +39,7 @@ wordpressmainwpasemanager/
 
 ## Requirements
 
-- **MainWP Dashboard** plugin active on the dashboard site (the extension shows an admin notice if it is not active — see [`is_mainwp_active()`](mainwp-ase-manager.php:155) and [`admin_notice_mainwp_required()`](mainwp-ase-manager.php:172)).
+- **MainWP Dashboard** plugin active on the dashboard site. The check in [`is_mainwp_active()`](mainwp-ase-manager.php) runs on `plugins_loaded`, never while the plugin file is being included: WordPress includes active plugins in alphabetical order, so `mainwp-ase-manager/mainwp-ase-manager.php` loads *before* `mainwp/mainwp.php` and an earlier check could not see MainWP's constants or classes. Detection also falls back to the `active_plugins` / `active_sitewide_plugins` options, so network activated installs are covered. When MainWP Dashboard really is inactive, [`maybe_init()`](mainwp-ase-manager.php) shows the notice rendered by [`admin_notice_mainwp_required()`](mainwp-ase-manager.php).
 - **PHP >= 8.2**.
 - **WordPress >= 5.0**.
 - **Admin and Site Enhancements (ASE)** plugin installed and active on the **child sites** that will receive the settings.
@@ -49,7 +49,7 @@ wordpressmainwpasemanager/
 ## Installation
 
 1. Install the plugin as a standard WordPress plugin on the **MainWP Dashboard site** — either upload the zip through **Plugins > Add New > Upload Plugin**, or copy the plugin folder into `wp-content/plugins/`.
-2. Ensure the **MainWP Dashboard** plugin is already installed and activated first. If it is not, the plugin displays an error notice in the admin area rather than loading its functionality.
+2. Ensure the **MainWP Dashboard** plugin is already installed and activated. The extension verifies it on `plugins_loaded`, after every active plugin file has been included, so the alphabetical plugin load order does not matter — no false error notice. If MainWP Dashboard is genuinely inactive, the plugin displays an error notice in the admin area instead of loading its functionality.
 3. Activate **MainWP ASE Manager** through the **Plugins** screen.
 4. Locate the new **ASE Manager** submenu under the **MainWP** dashboard menu (parent slug `mainwp_tab`).
 

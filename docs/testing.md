@@ -65,6 +65,27 @@ $result = MainWP_ASE_Manager_Github_Updater::check_for_updates();
 `wordpressmainwpasemanager-2.0.0.zip` is listed first — that ordering is what made "Update now"
 intermittently fail.
 
+## Dependency detection (no WordPress needed)
+
+`tests/test-mainwp-dependency-detection.php` stubs the handful of WordPress functions used while the
+plugin file is included and asserts which hooks the bootstrap registers:
+
+```bash
+php tests/test-mainwp-dependency-detection.php
+```
+
+| Scenario | What it simulates |
+| --- | --- |
+| `mainwp-loaded-after-us` | MainWP Dashboard is active but included **after** this plugin (alphabetical load order) — the false notice regression |
+| `mainwp-active-class-only` | `MainWP\Dashboard\MainWP_System` exists |
+| `mainwp-active-option-only` | Only `is_plugin_active()` / the `active_plugins` option knows about MainWP |
+| `mainwp-network-active` | Multisite network activation via `active_sitewide_plugins` |
+| `mainwp-inactive` | MainWP Dashboard is not installed/activated — the notice **must** appear |
+
+Expected output: `✅ All 5 dependency detection scenarios passed.` If a "requires MainWP Dashboard"
+notice shows up in an active scenario, the dependency check has been moved back into
+`bootstrap()`, where it runs before MainWP Dashboard defines `MAINWP_PLUGIN_FILE`.
+
 ## Manual verification in WordPress
 
 1. `wp plugin list --name=mainwp-ase-manager` and note the installed version.

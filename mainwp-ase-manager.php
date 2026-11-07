@@ -136,6 +136,13 @@ class MainWP_ASE_Manager {
 	const VERSION = '1.0.0';
 
 	/**
+	 * Plugin basename of the MainWP Dashboard plugin.
+	 *
+	 * @var string
+	 */
+	const MAINWP_BASENAME = 'mainwp/mainwp.php';
+
+	/**
 	 * Constructor.
 	 *
 	 * Kept minimal: all bootstrap work happens in bootstrap().
@@ -215,9 +222,33 @@ class MainWP_ASE_Manager {
 		add_action( 'admin_post_mainwp_ase_manager_check_updates', array( __CLASS__, 'handle_check_updates' ) );
 		add_action( 'admin_notices', array( __CLASS__, 'show_update_check_notice' ) );
 
+		/*
+		 * The dependency check must not run here. WordPress includes active
+		 * plugins in the order stored in the `active_plugins` option, which is
+		 * alphabetical, so `mainwp-ase-manager/mainwp-ase-manager.php` is
+		 * always included before `mainwp/mainwp.php` ("-" sorts before "/").
+		 * At this point MainWP Dashboard has not defined MAINWP_PLUGIN_FILE nor
+		 * loaded MainWP\Dashboard\MainWP_System, so an early check always
+		 * reports MainWP as missing and shows a false "requires MainWP
+		 * Dashboard" notice. `maybe_init()` instead runs on `plugins_loaded`,
+		 * after every plugin file has been included.
+		 */
+		add_action( 'plugins_loaded', array( $plugin, 'maybe_init' ), 99 );
+	}
+
+	/**
+	 * Wire up the extension once the MainWP Dashboard dependency is known.
+	 *
+	 * Runs late on `plugins_loaded`, i.e. after every active plugin file has
+	 * been included, so MainWP Dashboard has already defined its constants and
+	 * loaded its classes regardless of the alphabetical plugin load order.
+	 *
+	 * @return void
+	 */
+	public function maybe_init() {
 		// Do not initialize unless MainWP Dashboard is active.
-		if ( ! $plugin->is_mainwp_active() ) {
-			add_action( 'admin_notices', array( $plugin, 'admin_notice_mainwp_required' ) );
+		if ( ! $this->is_mainwp_active() ) {
+			add_action( 'admin_notices', array( $this, 'admin_notice_mainwp_required' ) );
 			return;
 		}
 
@@ -231,15 +262,54 @@ class MainWP_ASE_Manager {
 	/**
 	 * Whether the MainWP Dashboard plugin is active.
 	 *
+	 * Several independent signals are tested because this check runs on
+	 * `plugins_loaded`, where MainWP Dashboard may have been included before or
+	 * after this plugin depending on its folder name.
+	 *
 	 * @return bool
 	 */
 	public function is_mainwp_active() {
-		if ( defined( 'MAINWP_PLUGIN_FILE' ) ) {
+		// MainWP Dashboard defines these in mainwp.php, before it boots.
+		if ( defined( 'MAINWP_PLUGIN_FILE' ) || defined( 'MAINWP_PLUGIN_DIR' ) || defined( 'MAINWP_PLUGIN_URL' ) ) {
 			return true;
 		}
 
 		if ( class_exists( 'MainWP\Dashboard\MainWP_System' ) ) {
 			return true;
+		}
+
+		// MainWP Dashboard ships its helper functions in includes/functions.php.
+		if ( function_exists( 'MainWP\Dashboard\mainwp_current_user_can' ) || function_exists( 'mainwp_current_user_can' ) ) {
+			return true;
+		}
+
+		// Last resort: read what WordPress itself uses to decide what to load.
+		return self::is_mainwp_plugin_active();
+	}
+
+	/**
+	 * Whether the MainWP Dashboard plugin is listed as active in the options.
+	 *
+	 * Fallback for installs where MainWP Dashboard has not defined any of its
+	 * constants, classes or functions yet. `is_plugin_active()` only exists once
+	 * wp-admin/includes/plugin.php is loaded (not on front end requests), so the
+	 * plugin lists are read directly in that case. `is_plugin_active()` already
+	 * covers network activated plugins.
+	 *
+	 * @return bool
+	 */
+	protected static function is_mainwp_plugin_active() {
+		if ( function_exists( 'is_plugin_active' ) ) {
+			return is_plugin_active( self::MAINWP_BASENAME );
+		}
+
+		if ( in_array( self::MAINWP_BASENAME, (array) get_option( 'active_plugins', array() ), true ) ) {
+			return true;
+		}
+
+		if ( is_multisite() ) {
+			$network_active = (array) get_site_option( 'active_sitewide_plugins', array() );
+			return isset( $network_active[ self::MAINWP_BASENAME ] );
 		}
 
 		return false;
