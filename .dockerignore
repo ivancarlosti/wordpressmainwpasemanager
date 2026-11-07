@@ -1,0 +1,12 @@
+docs
+plans
+docker
+.github
+
+.git
+.gitignore
+node_modules
+vendor
+*.log
+Dockerfile
+docker-compose.yml

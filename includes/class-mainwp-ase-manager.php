@@ -139,6 +139,46 @@ class MainWP_ASE_Manager_Page {
 
 				<div id="mainwp-ase-manager-results" class="mainwp-ase-manager-results"></div>
 			</form>
+
+			<hr style="margin-top: 30px;">
+			<p style="text-align: center; color: #666; font-size: 12px;">
+				<?php esc_html_e( 'MainWP ASE Manager - Push Admin and Site Enhancements settings to MainWP child sites', 'mainwp-ase-manager' ); ?><br>
+				<a href="https://github.com/ivancarlosti/wordpressmainwpasemanager" target="_blank" rel="noopener noreferrer">
+					github.com/ivancarlosti/wordpressmainwpasemanager
+				</a><br>
+				<?php echo esc_html( sprintf( 'v%s', MainWP_ASE_Manager::VERSION ) ); ?>
+				<?php if ( current_user_can( 'update_plugins' ) && class_exists( 'MainWP_ASE_Manager_Github_Updater' ) ) : ?>
+					&middot;
+					<a href="<?php echo esc_url( MainWP_ASE_Manager_Github_Updater::check_url() ); ?>">
+						<?php esc_html_e( 'Check for updates', 'mainwp-ase-manager' ); ?>
+					</a>
+				<?php endif; ?>
+				<?php $cached_update = class_exists( 'MainWP_ASE_Manager_Github_Updater' ) ? MainWP_ASE_Manager_Github_Updater::get_cached_update() : null; ?>
+				<?php if ( $cached_update ) : ?>
+					<br>
+					<strong>
+						<?php
+						printf(
+							// translators: %s: New version number.
+							esc_html__( 'Update available: v%s', 'mainwp-ase-manager' ),
+							esc_html( $cached_update['version'] )
+						);
+						?>
+					</strong>
+					<?php if ( current_user_can( 'update_plugins' ) ) : ?>
+						&middot;
+						<a href="<?php echo esc_url( MainWP_ASE_Manager_Github_Updater::update_url() ); ?>">
+							<?php esc_html_e( 'Update now', 'mainwp-ase-manager' ); ?>
+						</a>
+					<?php endif; ?>
+					<?php if ( ! empty( $cached_update['url'] ) ) : ?>
+						&middot;
+						<a href="<?php echo esc_url( $cached_update['url'] ); ?>" target="_blank" rel="noopener noreferrer">
+							<?php esc_html_e( 'Release notes', 'mainwp-ase-manager' ); ?>
+						</a>
+					<?php endif; ?>
+				<?php endif; ?>
+			</p>
 		</div>
 		<?php
 	}

@@ -32,8 +32,7 @@ wordpressmainwpasemanager/
 │   └── css/
 │       └── mainwp-ase-manager.css         # Extension page styles
 ├── composer.json
-├── manifest.json
-└── readme.txt
+└── manifest.json
 ```
 
 ---
@@ -53,6 +52,19 @@ wordpressmainwpasemanager/
 2. Ensure the **MainWP Dashboard** plugin is already installed and activated first. If it is not, the plugin displays an error notice in the admin area rather than loading its functionality.
 3. Activate **MainWP ASE Manager** through the **Plugins** screen.
 4. Locate the new **ASE Manager** submenu under the **MainWP** dashboard menu (parent slug `mainwp_tab`).
+
+---
+
+## Updating
+
+The plugin updates itself from [GitHub Releases](https://github.com/ivancarlosti/wordpressmainwpasemanager/releases):
+
+1. Open **Plugins → Installed Plugins** and click **Check for updates** in the plugin row. It performs a real, forced request to the GitHub API — the 12 hour release cache is bypassed, so the answer is fresh. The link also works when the **MainWP Dashboard** plugin is deactivated, because the updater hooks are registered before the MainWP dependency check.
+2. The result is reported in a notice: a newer release offers **Update now** (the native WordPress upgrader) plus a link to the release notes, otherwise the plugin confirms you are already running the latest version.
+3. Nothing else changes: updates also show up in **Dashboard → Updates**, work with `wp plugin update mainwp-ase-manager` and can be applied automatically by WordPress cron.
+4. Use the `mainwp-ase-manager.zip` asset when updating by hand — its root folder is the plugin folder, so it replaces the current copy. The other archives attached to a release (`wordpressmainwpasemanager-<version>.zip`, the generated source archive) unpack several top level entries and fail with *"The package contains more than one folder."*
+
+When GitHub cannot be reached the last known answer is kept, retries are throttled for one hour, and the updater never breaks the Plugins screen. See [`docs/updates.md`](docs/updates.md) for the full flow.
 
 ---
 

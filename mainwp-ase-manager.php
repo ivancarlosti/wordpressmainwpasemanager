@@ -34,7 +34,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 /*
  * Hard requirement: PHP 8.2+.
  *
- * Kept in sync with the "Requires PHP" plugin header, readme.txt and
+ * Kept in sync with the "Requires PHP" plugin header and
  * composer.json. WordPress validates the header on install and activation, but
  * a site can still auto-update the plugin while running an older PHP version,
  * so the plugin disables itself and explains why instead of failing later.
@@ -98,6 +98,16 @@ if ( version_compare( PHP_VERSION, MAINWP_ASE_MANAGER_MIN_PHP, '<' ) ) {
  * URLs and other plugin-relative paths.
  */
 define( 'MAINWP_ASE_MANAGER_FILE', __FILE__ );
+
+/**
+ * Plugin basename, e.g. mainwp-ase-manager/mainwp-ase-manager.php.
+ *
+ * Computed once here because `plugin_basename()` reflects the folder the
+ * plugin is actually installed in, which is not necessarily the plugin slug
+ * (a git clone lands in `wordpressmainwpasemanager/`). The GitHub updater
+ * needs it to build the native WordPress upgrade URL.
+ */
+define( 'MAINWP_ASE_MANAGER_BASENAME', plugin_basename( __FILE__ ) );
 
 /**
  * MainWP_ASE_Manager class.
@@ -194,6 +204,17 @@ class MainWP_ASE_Manager {
 		$plugin = new self();
 		self::$_instance = $plugin;
 
+		/*
+		 * Updates are independent of MainWP Dashboard: the updater, the row
+		 * links, the manual check handler and its notice are registered before
+		 * the dependency check below, so a deactivated MainWP Dashboard never
+		 * hides plugin updates and WordPress cron keeps checking for them.
+		 */
+		add_action( 'init', array( __CLASS__, 'init_github_updater' ) );
+		add_filter( 'plugin_row_meta', array( __CLASS__, 'add_plugin_row_meta' ), 10, 2 );
+		add_action( 'admin_post_mainwp_ase_manager_check_updates', array( __CLASS__, 'handle_check_updates' ) );
+		add_action( 'admin_notices', array( __CLASS__, 'show_update_check_notice' ) );
+
 		// Do not initialize unless MainWP Dashboard is active.
 		if ( ! $plugin->is_mainwp_active() ) {
 			add_action( 'admin_notices', array( $plugin, 'admin_notice_mainwp_required' ) );
@@ -233,6 +254,177 @@ class MainWP_ASE_Manager {
 		echo '<div class="notice notice-error"><p>';
 		esc_html_e( 'MainWP ASE Manager requires the MainWP Dashboard plugin to be installed and activated.', 'mainwp-ase-manager' );
 		echo '</p></div>';
+	}
+
+	/**
+	 * Initialize the GitHub updater.
+	 *
+	 * Runs on `init` and also during the WordPress cron job so the plugin can
+	 * be updated automatically, mirroring the updater bootstrap used by
+	 * plugins that rely on a custom update server.
+	 *
+	 * @return void
+	 */
+	public static function init_github_updater() {
+		$doing_cron = defined( 'DOING_CRON' ) && DOING_CRON;
+
+		if ( ! current_user_can( 'manage_options' ) && ! $doing_cron ) {
+			return;
+		}
+
+		new MainWP_ASE_Manager_Github_Updater(
+			MAINWP_ASE_MANAGER_BASENAME,
+			self::VERSION
+		);
+	}
+
+	/**
+	 * Add update related links to the plugin row meta on the Plugins screen.
+	 *
+	 * "Check for updates" performs a real, forced GitHub Releases lookup — the
+	 * result is reported in an admin notice and in the native WordPress update
+	 * row — while "Release notes" opens the plugin releases page on GitHub.
+	 *
+	 * @param array  $plugin_meta An array of the plugin's metadata.
+	 * @param string $plugin_file Path to the plugin file relative to the plugins directory.
+	 *
+	 * @return array
+	 */
+	public static function add_plugin_row_meta( $plugin_meta, $plugin_file ) {
+		if ( strpos( $plugin_file, 'mainwp-ase-manager.php' ) === false ) {
+			return $plugin_meta;
+		}
+
+		if ( current_user_can( 'update_plugins' ) ) {
+			$plugin_meta[] = sprintf(
+				'<a href="%1$s">%2$s</a>',
+				esc_url( MainWP_ASE_Manager_Github_Updater::check_url() ),
+				esc_html__( 'Check for updates', 'mainwp-ase-manager' )
+			);
+		}
+
+		$plugin_meta[] = sprintf(
+			'<a href="%1$s" target="_blank" rel="noopener noreferrer">%2$s</a>',
+			'https://github.com/ivancarlosti/wordpressmainwpasemanager/releases',
+			esc_html__( 'Release notes', 'mainwp-ase-manager' )
+		);
+
+		return $plugin_meta;
+	}
+
+	/**
+	 * Handle the "Check for updates" link on the Plugins screen.
+	 *
+	 * Forces a GitHub Releases lookup, stores the outcome in a short lived
+	 * per-user transient and redirects back to the Plugins screen, where
+	 * `show_update_check_notice()` reports it.
+	 *
+	 * @return void
+	 */
+	public static function handle_check_updates() {
+		if ( ! current_user_can( 'update_plugins' ) ) {
+			wp_die( esc_html__( 'Sorry, you are not allowed to check for plugin updates on this site.', 'mainwp-ase-manager' ) );
+		}
+
+		check_admin_referer( 'mainwp_ase_manager_check_updates' );
+
+		if ( ! class_exists( 'MainWP_ASE_Manager_Github_Updater' ) ) {
+			wp_die( esc_html__( 'The update checker is not available.', 'mainwp-ase-manager' ) );
+		}
+
+		$result = MainWP_ASE_Manager_Github_Updater::check_for_updates();
+
+		set_transient(
+			MainWP_ASE_Manager_Github_Updater::RESULT_CACHE_KEY . '_' . get_current_user_id(),
+			$result,
+			5 * MINUTE_IN_SECONDS
+		);
+
+		wp_safe_redirect( self_admin_url( 'plugins.php' ) );
+		exit;
+	}
+
+	/**
+	 * Display the result of a manual "Check for updates" request.
+	 *
+	 * The result is stored in a short lived per-user transient by
+	 * `handle_check_updates()` and removed once rendered, so the notice
+	 * appears exactly once.
+	 *
+	 * @return void
+	 */
+	public static function show_update_check_notice() {
+		if ( ! class_exists( 'MainWP_ASE_Manager_Github_Updater' ) ) {
+			return;
+		}
+
+		$key    = MainWP_ASE_Manager_Github_Updater::RESULT_CACHE_KEY . '_' . get_current_user_id();
+		$result = get_transient( $key );
+
+		if ( ! is_array( $result ) || empty( $result['state'] ) ) {
+			return;
+		}
+
+		delete_transient( $key );
+
+		$version   = isset( $result['version'] ) ? $result['version'] : '';
+		$installed = isset( $result['installed'] ) ? $result['installed'] : self::VERSION;
+		$release   = isset( $result['url'] ) ? $result['url'] : '';
+
+		if ( 'update' === $result['state'] ) {
+			$message = sprintf(
+				// translators: 1: New version number, 2: Installed version number.
+				__( '<strong>MainWP ASE Manager %1$s is available.</strong> You are running version %2$s.', 'mainwp-ase-manager' ),
+				esc_html( $version ),
+				esc_html( $installed )
+			);
+
+			$actions = '';
+
+			if ( current_user_can( 'update_plugins' ) ) {
+				$actions .= sprintf(
+					'<a class="button button-primary" href="%1$s">%2$s</a>',
+					esc_url( MainWP_ASE_Manager_Github_Updater::update_url() ),
+					esc_html__( 'Update now', 'mainwp-ase-manager' )
+				);
+			}
+
+			if ( '' !== $release ) {
+				$actions .= sprintf(
+					' <a href="%1$s" target="_blank" rel="noopener noreferrer">%2$s</a>',
+					esc_url( $release ),
+					esc_html__( 'Release notes', 'mainwp-ase-manager' )
+				);
+			}
+
+			printf(
+				'<div class="notice notice-warning"><p>%1$s</p><p>%2$s</p></div>',
+				wp_kses_post( $message ),
+				wp_kses_post( $actions )
+			);
+
+			return;
+		}
+
+		if ( 'current' === $result['state'] ) {
+			printf(
+				'<div class="notice notice-success is-dismissible"><p>%s</p></div>',
+				esc_html(
+					sprintf(
+						// translators: %s: Installed version number.
+						__( 'MainWP ASE Manager is up to date (version %s).', 'mainwp-ase-manager' ),
+						$installed
+					)
+				)
+			);
+
+			return;
+		}
+
+		printf(
+			'<div class="notice notice-error"><p>%s</p></div>',
+			esc_html__( 'The update check could not reach GitHub. Please try again in a few minutes.', 'mainwp-ase-manager' )
+		);
 	}
 
 	/**
